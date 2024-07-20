@@ -1,0 +1,12 @@
+.sync.toml
+*.tar.gz
+.ipynb_checkpoints/*
+.*
+!/.gitignore
+*.png
+*.svg
+*.pdf
+*.jpg
+run/
+*.html
+*.sha256

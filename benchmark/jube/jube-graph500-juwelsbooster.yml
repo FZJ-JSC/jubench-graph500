@@ -1,0 +1,134 @@
+name: graph500_benchmark
+outpath: results
+
+# Configuration
+parameterset:
+  - name: systemParameter
+    init_with: platform.xml
+    parameter:
+      - { name: mail }
+      # Number of tasks has to be a power of 2
+      - { name: nodes, type: int, _: "4,8,16,32,64,128,256" }
+      - { name: taskspernode, type: int, _: "32" }
+      - { name: threadspertask, type: int, _: 1 }
+      # Scale (problem size): toy=26, mini=29, small=32, medium=36, large=39, huge=42 according to https://delaat.net/rp/2014-2015/p63/report.pdf
+      - { name: scale, type: int, _: "30" }
+      - { name: edgefactor, type: int, _: 16 }
+      - { name: timelimit, _: "24:00:00" }
+      - { name: executable, _: "${GRAPH500_DIR}/graph500_reference_bfs_sssp" }
+      - { name: queue, _: "booster" }
+      - { name: preprocess, _: "module purge; module load ${mpi_modules}; module load ${normal_modules}" }
+      - { name: args_exec, _: "${scale} ${edgefactor}" }
+      - { name: measurement, _: "time -p" }
+      - { name: env, _: "export SKIP_VALIDATION=1" }
+  - name: modules
+    parameter:
+      # - { name: index, type: int, _: "0,1,2,3,4" }
+      # - { name: mpi_modules, mode: python, _: '["Intel IntelMPI", "Intel ParaStationMPI", "Intel OpenMPI", "GCC ParaStationMPI", "GCC OpenMPI"][$index]' }
+      - { name: index, type: int, _: "0" }
+      - { name: mpi_modules, mode: python, _: '["GCC OpenMPI"][$index]' }
+      - { name: normal_modules, _: "JUBE" }
+  - name: compile_opts
+    parameter:
+      #- { name: comp_opts_index, type: int, _: "0,1" }
+      #- { name: prep_commands, mode: python, _: '["CFLAGS=\"-DBENCHPIN\"", "CFLAGS=\"\""][$comp_opts_index]' }
+      - { name: comp_opts_index, type: int, _: "0" }
+      - { name: prep_commands, mode: python, _: '["CFLAGS=\"\""][$comp_opts_index]' }
+  - name: constraint_opts
+    parameter:
+      - { name: constraint, mode: python, _: '"\"[bcell01|bcell02|bcell03|bcell04|bcell05|bcell06|bcell07|bcell08|bcell09|bcell10|bcell11|bcell12|bcell13|bcell14|bcell15|bcell16|bcell17|bcell18|bcell19|bcell20]\"" if $nodes <= 48 else "\"\""' }
+  - name: executeset
+    init_with: platform.xml
+    parameter:
+      - { name: GRAPH500_DIR,  export: true, _: "$jube_benchmark_home/$jube_wp_relpath/graph500/src" }
+
+fileset:
+  name: source_code
+  prepare:
+    - "cp -Rf $jube_benchmark_home/../../src/graph500 ./"
+
+step:
+  - name: compile
+    use:
+      - modules
+      - executeset
+      - source_code
+      - compile_opts
+    do:
+      - 'module load ${mpi_modules} ${normal_modules}'
+      - { work_dir: "${GRAPH500_DIR}", _: '${prep_commands} make' }
+  - name: execute
+    depend: compile
+    iterations: 1
+    use:
+      - executeset
+      - systemParameter
+      - constraint_opts
+      - { from: "platform.xml", _: jobfiles }
+      - { from: "platform.xml", _: executesub }
+    do:
+      - "$submit --gres=gpu:4 --constraint=${constraint} $submit_script"
+      - { done_file: "$done_file" }
+
+patternset:
+  - name: runtimepattern
+    pattern:
+      - { name: total_runtime, type: float, unit: s, _: "real $jube_pat_fp" }
+      - { name: internal_runtime, type: float, unit: s, _: "user $jube_pat_fp" }
+      - { name: error_code, type: int, _: "JUBE_ERR_CODE=$jube_pat_int" }
+  - name: jobnumber
+    pattern:
+      - { name: jobid, _: "Submitted batch job $jube_pat_int" }
+  - name: solverpattern
+    pattern:
+      - { name: bfs_harmonic_mean_teps, type: float, _: "bfs  harmonic_mean_TEPS:     !  $jube_pat_fp" }
+      - { name: sssp_harmonic_mean_teps, type: float, _: "sssp harmonic_mean_TEPS:     !  $jube_pat_fp" }
+
+# Analyse
+analyser:
+  name: analyse
+  reduce: false
+  analyse:
+    step: execute
+    file:
+      - job.out
+      - { use: runtimepattern, _: job.err }
+      - { use: solverpattern, _: job.out }
+      - { use: jobnumber, _: stdout }
+
+# Create result table
+result:
+  use: analyse
+  table:
+    - name: result
+      style: pretty
+      tag: "!csv"
+      column:
+        - { title: "Job ID", _: jobid }
+        - nodes
+        - taskspernode
+        - threadspertask
+        - error_code
+        - internal_runtime
+        - total_runtime
+        - scale
+        - bfs_harmonic_mean_teps
+        - sssp_harmonic_mean_teps
+        - mpi_modules
+        - prep_commands
+    - name: result-csv
+      style: csv
+      tag: csv
+      column:
+        - { title: "Job ID", _: jobid }
+        - nodes
+        - taskspernode
+        - threadspertask
+        - error_code
+        - internal_runtime
+        - total_runtime
+        - scale
+        - bfs_harmonic_mean_teps
+        - sssp_harmonic_mean_teps
+        - mpi_modules
+        - prep_commands
